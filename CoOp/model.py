@@ -46,12 +46,15 @@ class CoOp(nn.Module):
         for tokens in self.name_tokens:
             # Remove the start token, insert context, then add the rest
             tokens = tokens.squeeze(0)
-            # [SOS] + [CTX] + [rest of tokens except SOS]
+
+            # Fix: Ensure all tensors have the same number of dimensions
+            # We need to unsqueeze tokens to match the ctx dimensions
             prompt = torch.cat([
-                tokens[:1],  # [SOS]
-                self.ctx,    # [CTX]
-                tokens[1 + self.n_ctx:]  # [rest]
+                tokens[:1].unsqueeze(0),  # [1, 1]
+                self.ctx,                 # [n_ctx, ctx_dim]
+                tokens[1 + self.n_ctx:].unsqueeze(0)  # [1, rest]
             ], dim=0)
+
             prompts.append(prompt)
         prompts = torch.stack(prompts).to(self.device)
         # Encode prompts using CLIP's text encoder
