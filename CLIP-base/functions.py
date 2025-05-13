@@ -49,6 +49,7 @@ def split_data(dataset, base_classes):
     return base_dataset, novel_dataset
 
 
+@torch.no_grad()
 def eval(model, dataset, categories, batch_size, device, CLASS_NAMES, clip, label=""):
     model.eval()
     contig_cat2idx = {cat: idx for idx, cat in enumerate(categories)}
@@ -61,22 +62,20 @@ def eval(model, dataset, categories, batch_size, device, CLASS_NAMES, clip, labe
         dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     correct_predictions = 0
     total_processed = 0
-    
+
     for image, target in tqdm(dataloader, desc=label):
         target = torch.Tensor([contig_cat2idx[t.item()]
                               for t in target]).long()
         image = image.to(device)
         target = target.to(device)
-        
-        with torch.no_grad():  # Disable gradient calculation
-            image_features = model.encode_image(image)
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-            similarity = image_features @ text_features.T
-            predicted_class = similarity.argmax(dim=-1)
-            correct_predictions += (predicted_class == target).sum().item()
-            
-        
+
+        image_features = model.encode_image(image)
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        similarity = image_features @ text_features.T
+        predicted_class = similarity.argmax(dim=-1)
+        correct_predictions += (predicted_class == target).sum().item()
+
         total_processed += len(target)
-        
+
     accuracy = correct_predictions / len(dataset)
     return accuracy
