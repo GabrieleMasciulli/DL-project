@@ -47,12 +47,16 @@ class CoOp(nn.Module):
             # Remove the start token, insert context, then add the rest
             tokens = tokens.squeeze(0)
 
-            # Fix: Ensure all tensors have the same number of dimensions
-            # We need to unsqueeze tokens to match the ctx dimensions
+            # Reshape tokens to match ctx dimensions
+            start_token = tokens[0].reshape(1, -1)  # [1, dim]
+            # [rest, dim]
+            end_tokens = tokens[1 + self.n_ctx:].reshape(-1, self.ctx_dim)
+
+            # Now concatenate along dimension 0
             prompt = torch.cat([
-                tokens[:1].unsqueeze(0),  # [1, 1]
-                self.ctx,                 # [n_ctx, ctx_dim]
-                tokens[1 + self.n_ctx:].unsqueeze(0)  # [1, rest]
+                start_token,  # [1, dim]
+                self.ctx,     # [n_ctx, dim]
+                end_tokens    # [rest, dim]
             ], dim=0)
 
             prompts.append(prompt)
