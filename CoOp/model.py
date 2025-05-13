@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import clip
 
 
 class CoOp(nn.Module):
@@ -26,9 +27,9 @@ class CoOp(nn.Module):
         # Initialize context vectors (prompt tokens)
         if ctx_init is not None:
             # Optionally initialize with some text
-            ctx_init_tokens = clip_model.tokenize(ctx_init).to(device)
+            ctx_init_tokens = clip.tokenize(ctx_init).to(device)
             with torch.no_grad():
-                embedding = clip_model.token_embedding(
+                embedding = self.clip_model.token_embedding(
                     ctx_init_tokens).mean(dim=1)
             self.ctx = nn.Parameter(embedding.repeat(n_ctx, 1))
         else:
@@ -36,7 +37,7 @@ class CoOp(nn.Module):
             self.ctx = nn.Parameter(torch.randn(n_ctx, ctx_dim))
 
         # Tokenize classnames
-        self.name_tokens = [clip_model.tokenize(
+        self.name_tokens = [clip.tokenize(
             f"a photo of a {name}, a type of flower.").to(device) for name in classnames]
 
     def forward(self):
