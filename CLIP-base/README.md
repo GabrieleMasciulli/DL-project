@@ -12,3 +12,9 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
+
+## 3. Install CLIP
+
+```bash
+pip3 install git+https://github.com/openai/CLIP.git
+```
