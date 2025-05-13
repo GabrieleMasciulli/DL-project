@@ -9,6 +9,7 @@ numpy==2.2.5
 packaging==25.0
 pillow==11.2.1
 regex==2024.11.6
+scipy==1.15.3
 sympy==1.14.0
 torch==2.7.0
 torchvision==0.22.0
