@@ -40,35 +40,42 @@ class CoOp(nn.Module):
         self.name_tokens = [clip.tokenize(
             f"a photo of a {name}, a type of flower.").to(device) for name in classnames]
 
-        # Get token embeddings once during initialization
-        with torch.no_grad():
-            self.token_embeddings = []
-            for tokens in self.name_tokens:
-                # Get the token embeddings from CLIP
-                embeddings = self.clip_model.token_embedding(tokens.squeeze(0))
-                self.token_embeddings.append(embeddings)
-
     def forward(self):
-        # Build prompts by concatenating context and class tokens
+        # Build prompts by inserting learnable context into token embeddings
         prompts = []
         for i, tokens in enumerate(self.name_tokens):
-            # Get the original token embeddings
-            embeddings = self.token_embeddings[i]
-
-            # Extract the relevant parts
+            # tokens: [1, token_length]
+            tokens = tokens.to(self.device)
+            # Get token embeddings: [token_length, ctx_dim]
+            embeddings = self.clip_model.token_embedding(tokens).squeeze(0)
+            # Find where to insert the context (after the start token)
             prefix = embeddings[:1]
             suffix = embeddings[1 + self.n_ctx:]
-
-            # Concatenate with learnable context
+            # Concatenate: [start] + [ctx] + [rest]
             prompt = torch.cat([
-                prefix,      # Start token
-                self.ctx,    # Context tokens
-                suffix       # Rest of the embeddings
+                prefix,
+                self.ctx,
+                suffix
             ], dim=0)
-
             prompts.append(prompt)
 
+        # Stack prompts: [num_classes, token_length, ctx_dim]
         prompts = torch.stack(prompts).to(self.device)
-        # Encode prompts using CLIP's text encoder
-        text_features = self.clip_model.encode_text(prompts)
+
+        # Pass through transformer and the rest of the text encoder
+        # (following CLIP's encode_text implementation)
+        x = prompts
+        x = x + self.clip_model.positional_embedding
+        x = self.clip_model.transformer(x)
+        x = self.clip_model.ln_final(x)
+        # Take features at the end-of-text token position (assume it's the same for all)
+        eos_token_id = self.clip_model.token_embedding.weight.shape[0] - 1
+        # Find the position of the <EOT> token in each prompt
+        # (CLIP uses 49407 as <EOT> by default)
+        eot_indices = (self.name_tokens[0] == self.clip_model.tokenizer.eot_token).nonzero(
+            as_tuple=True)[1].item()
+        text_features = x[torch.arange(x.shape[0]), eot_indices]
+        # Normalize
+        text_features = text_features / \
+            text_features.norm(dim=-1, keepdim=True)
         return text_features
