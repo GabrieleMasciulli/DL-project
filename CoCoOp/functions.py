@@ -4,7 +4,7 @@ from torchvision.datasets import Flowers102
 from tqdm import tqdm
 from model import get_tokenized_prompts
 from utils import BATCH_SIZE_EVAL
-from torch import functional as F
+import torch.nn.functional as F
 
 
 def split_data(dataset: Dataset, categories: list[int]) -> tuple[Subset, Subset]:
