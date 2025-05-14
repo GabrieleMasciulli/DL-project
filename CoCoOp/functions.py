@@ -3,7 +3,8 @@ from torch.utils.data import Dataset, Subset
 from torchvision.datasets import Flowers102
 from tqdm import tqdm
 import numpy as np
-from model import get_tokenized_prompts  # Import for use in eval_cocoop
+from model import get_tokenized_prompts
+from utils import BATCH_SIZE_EVAL, BATCH_SIZE_TRAIN
 
 
 def split_data(dataset: Dataset, categories: list[int]) -> tuple[Subset, Subset]:
@@ -105,7 +106,6 @@ def train_cocoop(
     device,
     categories,
     all_class_names,
-    batch_size,
     clip_tokenizer,
 ):
     best_val_acc = 0.0
@@ -129,7 +129,7 @@ def train_cocoop(
             dataset=val_loader.dataset,
             eval_categories=categories,
             all_class_names=all_class_names,
-            batch_size=batch_size,
+            batch_size=BATCH_SIZE_EVAL,
             device=device,
             clip_tokenizer=clip_tokenizer,
             label=f"Validation Epoch {epoch+1}/{epochs}"

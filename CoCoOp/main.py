@@ -87,7 +87,6 @@ def main():
         device=DEVICE,
         categories=base_classes,
         all_class_names=CLASS_NAMES,
-        batch_size=BATCH_SIZE_TRAIN,
         clip_tokenizer=clip.tokenize
     )
     print("✅ Training complete!\n")
