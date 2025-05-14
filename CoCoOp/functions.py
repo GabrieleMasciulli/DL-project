@@ -255,7 +255,7 @@ def eval(
 
             # 1. Get image features
             image_features_full = clip_model_visual(
-                images.to(cocoop_model.ctx.dtype))
+                images.to(cocoop_model.clip_model.dtype))
 
             # 2. Generate delta_ctx using MetaNet
             # Ensure image_features_full are on the correct device and dtype for MetaNet
