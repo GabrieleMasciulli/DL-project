@@ -16,13 +16,13 @@ class MetaNet(nn.Module):
     Consists of a 2-layer MLP with a bottleneck design.
     """
 
-    def __init__(self, vis_dim, n_ctx, ctx_dim, bottleneck_reduction=16, dtype=torch.float32, drop=0.0):
+    def __init__(self, vis_dim, n_ctx, ctx_dim, bottleneck_reduction=16, dtype=torch.float32, dropout=0.0):
         super().__init__()
         self.n_ctx = n_ctx
         self.ctx_dim = ctx_dim
         hidden_dim = vis_dim // bottleneck_reduction
 
-        self.drop = nn.Dropout(drop)
+        self.drop = nn.Dropout(dropout)
         self.fc1 = nn.Linear(vis_dim, hidden_dim, dtype=dtype)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(hidden_dim, n_ctx * ctx_dim, dtype=dtype)
