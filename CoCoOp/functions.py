@@ -281,5 +281,28 @@ def eval(
     return accuracy
 
 
+def clip_contrastive_loss(image_features, text_features, temperature=0.07):
+    """
+        Computes the symmetric InfoNCE loss for image-text pairs.
+        Args:
+            image_features: (batch_size, dim)
+            text_features: (batch_size, dim)
+            temperature: scaling factor
+        Returns:
+            Scalar loss value
+        """
+    # Normalize features
+    image_features = F.normalize(image_features, dim=-1)
+    text_features = F.normalize(text_features, dim=-1)
+
+    logits_per_image = image_features @ text_features.t() / temperature
+    logits_per_text = text_features @ image_features.t() / temperature
+
+    labels = torch.arange(image_features.size(0)).to(image_features.device)
+    loss_i = F.cross_entropy(logits_per_image, labels)
+    loss_t = F.cross_entropy(logits_per_text, labels)
+    return (loss_i + loss_t) / 2
+
+
 def harmonic_mean(h_new, h_base):
     return 2 * h_new * h_base / (h_new + h_base) if (h_new + h_base) != 0 else 0

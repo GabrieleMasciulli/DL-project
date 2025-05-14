@@ -1,6 +1,6 @@
 from utils import DEVICE, base_novel_categories, harmonic_mean, BATCH_SIZE_EVAL, BATCH_SIZE_TRAIN
 # Will change train_coop later
-from functions import split_data, get_data, eval, train_cocoop
+from functions import split_data, get_data, eval, train_cocoop, clip_contrastive_loss
 import clip
 from model import CoCoOp
 import torch
@@ -71,7 +71,7 @@ def main():
         [cocoop.ctx],
         lr=0.001
     )
-    criterion = nn.CrossEntropyLoss()
+    criterion = clip_contrastive_loss
 
     # Train the model
     print("\n🚀 Starting CoCoOp training...")
