@@ -2,9 +2,9 @@ import torch
 from torch.utils.data import Dataset, Subset
 from torchvision.datasets import Flowers102
 from tqdm import tqdm
-import numpy as np
 from model import get_tokenized_prompts
-from utils import BATCH_SIZE_EVAL, BATCH_SIZE_TRAIN
+from utils import BATCH_SIZE_EVAL
+from torch import functional as F
 
 
 def split_data(dataset: Dataset, categories: list[int]) -> tuple[Subset, Subset]:
@@ -107,8 +107,15 @@ def train_cocoop(
     categories,
     all_class_names,
     clip_tokenizer,
+    scheduler=None,
+    patience=3,
+    eval_novel_loader=None,
+    novel_categories=None,
+    harmonic_mean_func=None
 ):
-    best_val_acc = 0.0
+    best_combined_score = -float('inf')
+    best_model_state = None
+    epochs_no_improve = 0
 
     for epoch in range(epochs):
         # Train for one epoch
@@ -122,8 +129,8 @@ def train_cocoop(
             categories=categories
         )
 
-        # Evaluate on validation set
-        val_acc = eval(
+        # Evaluate on validation set (base)
+        val_acc_base = eval(
             cocoop_model=model,
             clip_model_visual=clip_model_visual,
             dataset=val_loader.dataset,
@@ -132,16 +139,52 @@ def train_cocoop(
             batch_size=BATCH_SIZE_EVAL,
             device=device,
             clip_tokenizer=clip_tokenizer,
-            label=f"Validation Epoch {epoch+1}/{epochs}"
+            label=f"Validation Base Epoch {epoch+1}/{epochs}"
         )
+
+        # Evaluate on validation set (novel)
+        if eval_novel_loader is not None and novel_categories is not None:
+            val_acc_novel = eval(
+                cocoop_model=model,
+                clip_model_visual=clip_model_visual,
+                dataset=eval_novel_loader.dataset,
+                eval_categories=novel_categories,
+                all_class_names=all_class_names,
+                batch_size=BATCH_SIZE_EVAL,
+                device=device,
+                clip_tokenizer=clip_tokenizer,
+                label=f"Validation Novel Epoch {epoch+1}/{epochs}"
+            )
+        else:
+            val_acc_novel = 0.0
+
+        # Combined score (sum or harmonic mean)
+        if harmonic_mean_func is not None:
+            combined_score = harmonic_mean_func(val_acc_base, val_acc_novel)
+        else:
+            combined_score = val_acc_base + val_acc_novel
 
         print(
-            f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}"
+            f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Base Acc: {val_acc_base:.4f}, Val Novel Acc: {val_acc_novel:.4f}, Combined Score: {combined_score:.4f}"
         )
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            # Optionally save model checkpoint here
+        if scheduler is not None:
+            scheduler.step()
+
+        # Early stopping logic
+        if combined_score > best_combined_score:
+            best_combined_score = combined_score
+            best_model_state = {k: v.cpu()
+                                for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(
+                    f"Early stopping at epoch {epoch+1}. Best combined score: {best_combined_score:.4f}")
+                if best_model_state is not None:
+                    model.load_state_dict(best_model_state)
+                break
 
     return model
 

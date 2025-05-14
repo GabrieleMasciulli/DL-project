@@ -4,7 +4,6 @@ from functions import split_data, get_data, eval, train_cocoop, clip_contrastive
 import clip
 from model import CoCoOp
 import torch
-import torch.nn as nn
 import torch.optim as optim
 
 
@@ -52,7 +51,8 @@ def main():
         n_ctx=16,
         ctx_dim=model.ln_final.weight.shape[0],
         vis_dim=vis_dim,
-        device=DEVICE
+        device=DEVICE,
+        dropout=0.2
     ).to(DEVICE)
 
     # ---- Training setup ----
@@ -66,11 +66,13 @@ def main():
         param.requires_grad = True
 
     # Optimizer should only optimize CoCoOp's parameters (ctx and meta_net)
-    optimizer = optim.Adam(
+    optimizer = optim.AdamW(
         list(cocoop.meta_net.parameters()) +
         [cocoop.ctx],
-        lr=0.001
+        lr=1e-4,
+        weight_decay=1e-4
     )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30)
     criterion = clip_contrastive_loss
 
     # Train the model
