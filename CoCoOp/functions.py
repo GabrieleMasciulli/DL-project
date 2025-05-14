@@ -74,19 +74,26 @@ def train_one_epoch_cocoop(
             image_features = image_features / \
                 image_features.norm(dim=-1, keepdim=True)
 
-        # Forward pass
-        logits = model(image_features)
-        if logits.dim() == 3:
-            logits = torch.einsum('bd,bcd->bc', image_features, logits)
-            logits *= model.clip_model.logit_scale.exp()
+        # Get text features for the batch classes
+        classnames = [model.classnames[i] for i in local_labels.tolist()]
+        tokenized_prompts = get_tokenized_prompts(
+            classnames, model.clip_model.tokenize, device, model.n_ctx
+        ).to(device)
+        prompt_embeddings = model.token_embedding(tokenized_prompts)
+        text_features = model.clip_model.encode_text(tokenized_prompts)
+        text_features = text_features / \
+            text_features.norm(dim=-1, keepdim=True)
 
-        loss = criterion(logits, local_labels)
+        # Contrastive loss expects (image_features, text_features)
+        loss = criterion(image_features, text_features)
         loss.backward()
         optimizer.step()
 
         running_loss += loss.item() * images.size(0)
+        logits = image_features @ text_features.t()
         pred = logits.argmax(dim=1)
-        correct += (pred == local_labels).sum().item()
+        correct += (pred == torch.arange(len(local_labels),
+                    device=device)).sum().item()
         total += local_labels.size(0)
 
     train_loss = running_loss / len(train_loader.dataset)
