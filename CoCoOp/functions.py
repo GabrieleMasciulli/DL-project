@@ -32,69 +32,116 @@ def get_data(transform=None) -> tuple[OxfordFlowers102, OxfordFlowers102, Oxford
     return train_set, val_set, test_set
 
 
-def train_cocoop(
+def train_one_epoch_cocoop(
     model,
     clip_model_visual,
     train_loader,
     optimizer,
     criterion,
-    epochs,
     device,
-    categories,  # Global indices of base classes model is trained on
+    categories,
 ):
-    print(f"Training CoCoOp on {len(categories)} base classes.")
-    # Create a mapping from global category index to local index (0 to N_base_classes-1)
-    # These are the classes the CoCoOp model's `forward` method will produce logits for.
+    model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    # Map global category indices to local indices
     global_to_local_label_map = {
         global_idx: local_idx for local_idx, global_idx in enumerate(categories)}
 
+    for images, labels in tqdm(train_loader, desc="Training"):
+        images, labels = images.to(device), labels.to(device)
+
+        # Filter and map labels to local indices
+        valid_indices = [i for i, l_item in enumerate(
+            labels.tolist()) if l_item in global_to_local_label_map]
+        if not valid_indices:
+            continue
+
+        images = images[valid_indices]
+        global_labels_for_batch = labels[valid_indices]
+        local_labels = torch.tensor(
+            [global_to_local_label_map[l.item()] for l in global_labels_for_batch], device=device
+        )
+
+        optimizer.zero_grad()
+
+        with torch.no_grad():
+            image_features = clip_model_visual(
+                images.to(model.clip_model.dtype))
+            image_features = image_features / \
+                image_features.norm(dim=-1, keepdim=True)
+
+        # Forward pass
+        logits = model(image_features)
+        if logits.dim() == 3:
+            logits = torch.einsum('bd,bcd->bc', image_features, logits)
+            logits *= model.clip_model.logit_scale.exp()
+
+        loss = criterion(logits, local_labels)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item() * images.size(0)
+        pred = logits.argmax(dim=1)
+        correct += (pred == local_labels).sum().item()
+        total += local_labels.size(0)
+
+    train_loss = running_loss / len(train_loader.dataset)
+    train_acc = correct / total if total > 0 else 0.0
+
+    return train_loss, train_acc
+
+
+def train_cocoop(
+    model,
+    clip_model_visual,
+    train_loader,
+    val_loader,
+    optimizer,
+    criterion,
+    epochs,
+    device,
+    categories,
+    all_class_names,
+    batch_size,
+    clip_tokenizer,
+):
+    best_val_acc = 0.0
+
     for epoch in range(epochs):
-        model.train()
-        running_loss = 0.0
-        progress_bar = tqdm(
-            train_loader, desc=f"Epoch {epoch+1}/{epochs} [T]", leave=False)
-        for images, labels in progress_bar:
-            images, labels = images.to(device), labels.to(device)
+        # Train for one epoch
+        train_loss, train_acc = train_one_epoch_cocoop(
+            model=model,
+            clip_model_visual=clip_model_visual,
+            train_loader=train_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            device=device,
+            categories=categories
+        )
 
-            # Filter out labels not in the current training categories (base classes)
-            # and map them to local indices
-            valid_indices = [i for i, l_item in enumerate(
-                labels.tolist()) if l_item in global_to_local_label_map]
-            if not valid_indices:
-                continue
+        # Evaluate on validation set
+        val_acc = eval(
+            cocoop_model=model,
+            clip_model_visual=clip_model_visual,
+            dataset=val_loader.dataset,
+            eval_categories=categories,
+            all_class_names=all_class_names,
+            batch_size=batch_size,
+            device=device,
+            clip_tokenizer=clip_tokenizer,
+            label=f"Validation Epoch {epoch+1}/{epochs}"
+        )
 
-            images = images[valid_indices]
-            global_labels_for_batch = labels[valid_indices]
-            local_labels = torch.tensor(
-                [global_to_local_label_map[l.item()] for l in global_labels_for_batch], device=device)
+        print(
+            f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}"
+        )
 
-            optimizer.zero_grad()
-
-            with torch.no_grad():
-                image_features = clip_model_visual(
-                    images.to(model.clip_model.dtype))
-                image_features = image_features / \
-                    image_features.norm(dim=-1, keepdim=True)
-
-            # Forward pass: model handles all text feature construction and normalization
-            logits = model(image_features)
-
-            # Compute logits: (B, N_cls, D) x (B, D) -> (B, N_cls)
-            # If model returns text features, compute similarity here
-            if logits.dim() == 3:
-                # (B, N_cls, D) and (B, D) -> (B, N_cls)
-                logits = torch.einsum('bd,bcd->bc', image_features, logits)
-                logits *= model.clip_model.logit_scale.exp()
-
-            loss = criterion(logits, local_labels)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item() * images.size(0)
-            progress_bar.set_postfix(loss=loss.item())
-
-        epoch_loss = running_loss / len(train_loader.dataset)
-        print(f"Epoch {epoch+1}/{epochs} - Training Loss: {epoch_loss:.4f}")
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            # Optionally save model checkpoint here
 
     return model
 

@@ -1,5 +1,7 @@
 import torch
 
+BATCH_SIZE_TRAIN = 8
+BATCH_SIZE_EVAL = 8
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 

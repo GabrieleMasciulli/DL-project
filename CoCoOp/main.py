@@ -1,6 +1,6 @@
-from utils import DEVICE, base_novel_categories, harmonic_mean
+from utils import DEVICE, base_novel_categories, harmonic_mean, BATCH_SIZE_EVAL, BATCH_SIZE_TRAIN
 # Will change train_coop later
-from functions import split_data, get_data, eval, train_cocoop, train_coop
+from functions import split_data, get_data, eval, train_cocoop
 import clip
 from model import CoCoOp
 import torch
@@ -37,9 +37,9 @@ def main():
 
     # Create data loaders
     train_loader = torch.utils.data.DataLoader(
-        train_base, batch_size=32, shuffle=True, num_workers=2)
+        train_base, batch_size=BATCH_SIZE_TRAIN, shuffle=True, num_workers=2)
     val_loader = torch.utils.data.DataLoader(
-        val_base, batch_size=32, shuffle=False, num_workers=2)
+        val_base, batch_size=BATCH_SIZE_EVAL, shuffle=False, num_workers=2)
 
     # ---- CoCoOp integration ----
     # Determine vis_dim from the CLIP model
@@ -61,8 +61,7 @@ def main():
         param.requires_grad = False
 
     # Unfreeze CoCoOp's own parameters (ctx and meta_net)
-    for param in cocoop.ctx.parameters():  # ctx is a Parameter, not a Module
-        param.requires_grad = True
+    cocoop.ctx.requires_grad = True
     for param in cocoop.meta_net.parameters():
         param.requires_grad = True
 
@@ -81,12 +80,14 @@ def main():
         model=cocoop,
         clip_model_visual=model.visual,
         train_loader=train_loader,
+        val_loader=val_loader,
         optimizer=optimizer,
         criterion=criterion,
         epochs=10,
         device=DEVICE,
         categories=base_classes,
-        CLASS_NAMES=CLASS_NAMES,
+        all_class_names=CLASS_NAMES,
+        batch_size=BATCH_SIZE_TRAIN,
         clip_tokenizer=clip.tokenize
     )
     print("✅ Training complete!\n")
