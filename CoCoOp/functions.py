@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import Dataset, Subset
-from torchvision.datasets import OxfordFlowers102
+from torchvision.datasets import Flowers102
 from tqdm import tqdm
 import numpy as np
 from model import get_tokenized_prompts  # Import for use in eval_cocoop
@@ -11,7 +11,7 @@ def split_data(dataset: Dataset, categories: list[int]) -> tuple[Subset, Subset]
     return Subset(dataset, idx), Subset(dataset, [i for i in range(len(dataset)) if i not in idx])
 
 
-def get_data(transform=None) -> tuple[OxfordFlowers102, OxfordFlowers102, OxfordFlowers102]:
+def get_data(transform=None):
     if transform is None:
         # Default transform if none provided (e.g., for initial inspection)
         from torchvision import transforms
@@ -23,11 +23,11 @@ def get_data(transform=None) -> tuple[OxfordFlowers102, OxfordFlowers102, Oxford
                                  0.229, 0.224, 0.225])
         ])
 
-    train_set = OxfordFlowers102(
+    train_set = Flowers102(
         root="./data", split="train", download=True, transform=transform)
-    val_set = OxfordFlowers102(
+    val_set = Flowers102(
         root="./data", split="val", download=True, transform=transform)
-    test_set = OxfordFlowers102(
+    test_set = Flowers102(
         root="./data", split="test", download=True, transform=transform)
     return train_set, val_set, test_set
 
