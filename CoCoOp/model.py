@@ -77,83 +77,46 @@ class CoCoOp(nn.Module):
         self.ln_final = clip_model.ln_final
         self.text_projection = clip_model.text_projection
 
-    def forward(self, image_features):
-        """
-        Constructs normalized text features for each image/class combination.
-        Args:
-            image_features: (B_img, vis_dim)
-            tokenized_prompts: (N_cls, L_prompt)
-        Returns:
-            torch.Tensor: Text features for all classes, for each image.
-                          Shape: (B_img, N_cls, D_text_feat)
-        """
-        # Ensure image_features are on the correct device and dtype for MetaNet
+    def _encode(self, tokenized_prompts, image_features):
         image_features = image_features.to(
             self.device, dtype=self.meta_net.fc1.weight.dtype)
-
-        # Generate instance-specific context adjustment using Meta-Net
-        # Shape: (B_img, n_ctx, ctx_dim)
         delta_ctx = self.meta_net(image_features)
-
-        # Combine shared context with instance-specific adjustment
-        # self.ctx shape: (n_ctx, ctx_dim)
-        # delta_ctx shape: (B_img, n_ctx, ctx_dim)
-        # dynamic_ctx shape: (B_img, n_ctx, ctx_dim)
         dynamic_ctx = self.ctx.unsqueeze(0) + delta_ctx
 
         B_img = image_features.shape[0]
-        N_cls = len(self.classnames)
-        L_prompt = self.tokenized_prompts.shape[1]  # Max prompt length
+        N_cls = tokenized_prompts.shape[0]
+        L_prompt = tokenized_prompts.shape[1]
 
-        # Get initial embeddings for the tokenized prompts (templates)
-        # Shape: (N_cls, L_prompt, D_embed)
         prompt_embeddings_template = self.token_embedding(
-            self.tokenized_prompts.to(self.device))
+            tokenized_prompts.to(self.device))
 
-        # Expand prompt templates for each image in the batch
-        # Shape: (B_img, N_cls, L_prompt, D_embed)
         expanded_prompt_embeddings = prompt_embeddings_template.unsqueeze(
             0).expand(B_img, -1, -1, -1)
-
-        # Expand dynamic_ctx for each class
-        # Shape: (B_img, N_cls, n_ctx, D_embed)
         expanded_dynamic_ctx = dynamic_ctx.unsqueeze(
             1).expand(-1, N_cls, -1, -1)
 
-        # Create the final embeddings by inserting the dynamic context
         final_embeddings = expanded_prompt_embeddings.clone()
         final_embeddings[:, :, 1:1+self.n_ctx, :] = expanded_dynamic_ctx
 
-        # Reshape for transformer: (B_img * N_cls, L_prompt, D_embed)
         x = final_embeddings.view(B_img * N_cls, L_prompt, self.ctx_dim)
-
-        # Add positional embeddings
-        # self.positional_embedding shape: (max_clip_len, D_embed)
         x = x + self.positional_embedding.to(x.dtype)
-
-        # Pass through CLIP's text transformer
-        x = x.permute(1, 0, 2)  # NLD -> LND (L_prompt, B_img * N_cls, D_embed)
-        # Ensure correct dtype for transformer
+        x = x.permute(1, 0, 2)
         x = self.transformer(x.to(self.clip_model.dtype))
-        x = x.permute(1, 0, 2)  # LND -> NLD (B_img * N_cls, L_prompt, D_embed)
-
-        # Final layer normalization and projection
+        x = x.permute(1, 0, 2)
         x = self.ln_final(x).type(self.clip_model.dtype)
 
-        # Get features corresponding to the [EOS] token
-        # self.tokenized_prompts shape: (N_cls, L_prompt)
-        # We need EOS indices for each of the (B_img * N_cls) sequences
-        eos_indices = self.tokenized_prompts.argmax(dim=-1)  # Shape: (N_cls)
-        eos_indices_expanded = eos_indices.unsqueeze(0).expand(
-            B_img, -1).reshape(B_img * N_cls)  # Shape: (B_img * N_cls)
-
-        # Select the features at EOS token positions and project
-        # x shape before selection: (B_img * N_cls, L_prompt, D_embed)
-        # text_features shape: (B_img * N_cls, D_text_feat)
+        eos_indices = tokenized_prompts.argmax(dim=-1)
+        eos_indices_expanded = eos_indices.unsqueeze(
+            0).expand(B_img, -1).reshape(B_img * N_cls)
         text_features = x[torch.arange(
             x.shape[0]), eos_indices_expanded] @ self.text_projection
-
-        # Reshape to (B_img, N_cls, D_text_feat)
         text_features = text_features.view(B_img, N_cls, -1)
-
+        text_features = text_features / \
+            text_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
         return text_features
+
+    def forward(self, image_features):
+        return self._encode(self.tokenized_prompts, image_features)
+
+    def encode_text(self, tokenized_prompts, image_features):
+        return self._encode(tokenized_prompts, image_features)

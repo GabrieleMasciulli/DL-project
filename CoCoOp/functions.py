@@ -75,13 +75,15 @@ def train_one_epoch_cocoop(
             image_features = image_features / \
                 image_features.norm(dim=-1, keepdim=True)
 
-        # Get text features for the batch classes
+        # Get text features for the batch classes using the CoCoOp model
         classnames = [model.classnames[i] for i in local_labels.tolist()]
         tokenized_prompts = get_tokenized_prompts(
             classnames, tokenize, device, model.n_ctx
         ).to(device)
-        prompt_embeddings = model.token_embedding(tokenized_prompts)
-        text_features = model.clip_model.encode_text(tokenized_prompts)
+
+        # Forward pass through CoCoOp model to get text features
+        text_features = model.encode_text(
+            tokenized_prompts, image_features=image_features)
         text_features = text_features / \
             text_features.norm(dim=-1, keepdim=True)
 
