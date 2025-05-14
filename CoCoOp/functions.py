@@ -5,6 +5,7 @@ from tqdm import tqdm
 from model import get_tokenized_prompts
 from utils import BATCH_SIZE_EVAL
 import torch.nn.functional as F
+from clip import tokenize
 
 
 def split_data(dataset: Dataset, categories: list[int]) -> tuple[Subset, Subset]:
@@ -77,7 +78,7 @@ def train_one_epoch_cocoop(
         # Get text features for the batch classes
         classnames = [model.classnames[i] for i in local_labels.tolist()]
         tokenized_prompts = get_tokenized_prompts(
-            classnames, model.clip_model.tokenize, device, model.n_ctx
+            classnames, tokenize, device, model.n_ctx
         ).to(device)
         prompt_embeddings = model.token_embedding(tokenized_prompts)
         text_features = model.clip_model.encode_text(tokenized_prompts)
