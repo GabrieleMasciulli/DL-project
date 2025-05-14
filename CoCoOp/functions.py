@@ -48,21 +48,22 @@ def train_one_epoch_cocoop(
     correct = 0
     total = 0
 
-    # Map global category indices to local indices
-    global_to_local_label_map = {
-        global_idx: local_idx for local_idx, global_idx in enumerate(categories)}
-
     for images, labels in tqdm(train_loader, desc="Training"):
         images, labels = images.to(device), labels.to(device)
 
-        # Filter and map labels to local indices
+        # Only keep samples whose labels are in categories
         valid_indices = [i for i, l_item in enumerate(
-            labels.tolist()) if l_item in global_to_local_label_map]
+            labels.tolist()) if l_item in categories]
         if not valid_indices:
             continue
 
         images = images[valid_indices]
         global_labels_for_batch = labels[valid_indices]
+
+        # Find unique classes in this batch and build local mapping
+        unique_classes = sorted(set(global_labels_for_batch.tolist()))
+        global_to_local_label_map = {
+            global_idx: local_idx for local_idx, global_idx in enumerate(unique_classes)}
         local_labels = torch.tensor(
             [global_to_local_label_map[l.item()] for l in global_labels_for_batch], device=device
         )
@@ -76,16 +77,20 @@ def train_one_epoch_cocoop(
                 image_features.norm(dim=-1, keepdim=True)
 
         # Get text features for the batch classes using the CoCoOp model
-        classnames = [model.classnames[i] for i in local_labels.tolist()]
+        classnames = [model.classnames[i] for i in unique_classes]
         tokenized_prompts = get_tokenized_prompts(
             classnames, tokenize, device, model.n_ctx
         ).to(device)
 
         # Forward pass through CoCoOp model to get text features
-        text_features = model.encode_text(
+        text_features_all = model.encode_text(
             tokenized_prompts, image_features=image_features)
-        text_features = text_features / \
-            text_features.norm(dim=-1, keepdim=True)
+        text_features_all = text_features_all / \
+            text_features_all.norm(dim=-1, keepdim=True)
+
+        # Select the text feature corresponding to the ground-truth class for each image
+        text_features = text_features_all[torch.arange(
+            len(local_labels)), local_labels]
 
         # Contrastive loss expects (image_features, text_features)
         loss = criterion(image_features, text_features)
@@ -347,6 +352,10 @@ def clip_contrastive_loss(image_features, text_features, temperature=0.07):
     # Normalize features
     image_features = F.normalize(image_features, dim=-1)
     text_features = F.normalize(text_features, dim=-1)
+
+    # Ensure both features are on the same dtype and device
+    image_features = image_features.to(
+        dtype=text_features.dtype, device=text_features.device)
 
     logits_per_image = image_features @ text_features.t() / temperature
     logits_per_text = text_features @ image_features.t() / temperature

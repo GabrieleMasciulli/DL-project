@@ -85,10 +85,11 @@ def main():
         val_loader=val_loader,
         optimizer=optimizer,
         criterion=criterion,
-        epochs=10,
+        epochs=15,
         device=DEVICE,
         categories=base_classes,
         all_class_names=CLASS_NAMES,
+        scheduler=scheduler,
         clip_tokenizer=clip.tokenize
     )
     print("✅ Training complete!\n")
