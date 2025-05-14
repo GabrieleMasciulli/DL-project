@@ -46,8 +46,6 @@ def main():
         clip_model=model,
         classnames=[CLASS_NAMES[i] for i in base_classes],
         n_ctx=16,
-        ctx_dim=model.ln_final.weight.shape[0] if hasattr(
-            model, "ln_final") else 512,
         device=DEVICE
     ).to(DEVICE)
 

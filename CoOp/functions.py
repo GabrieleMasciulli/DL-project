@@ -80,15 +80,15 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, categorie
 
         # Forward pass: get text features from CoOp
         text_features = model()
-        text_features /= text_features.norm(dim=-1, keepdim=True)
+        text_features_norm = text_features / text_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
 
         # Get image features from CLIP
         with torch.no_grad():
             image_features = model.clip_model.encode_image(images)
-            image_features /= image_features.norm(dim=-1, keepdim=True)
+            image_features_norm = image_features / image_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
 
         # Compute logits and loss
-        logits = 100.0 * image_features @ text_features.T
+        logits = 100.0 * image_features_norm @ text_features_norm.T
         loss = criterion(logits, targets)
 
         # Backward pass and optimize
