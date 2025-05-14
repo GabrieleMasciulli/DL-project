@@ -101,9 +101,9 @@ class CoCoOp(nn.Module):
         x = final_embeddings.view(B_img * N_cls, L_prompt, self.ctx_dim)
         x = x + self.positional_embedding.to(x.dtype)
         x = x.permute(1, 0, 2)
-        x = self.transformer(x.to(self.clip_model.dtype))
+        x = self.transformer(x.to(self.ctx.dtype))
         x = x.permute(1, 0, 2)
-        x = self.ln_final(x).type(self.clip_model.dtype)
+        x = self.ln_final(x).type(self.ctx.dtype)
 
         eos_indices = tokenized_prompts.argmax(dim=-1)
         eos_indices_expanded = eos_indices.unsqueeze(

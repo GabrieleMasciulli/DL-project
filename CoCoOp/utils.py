@@ -19,7 +19,8 @@ def base_novel_categories(dataset) -> tuple[list[int], list[int]]:
 
 
 def harmonic_mean(base_accuracy, novel_accuracy):
-    numerator = 2
-    denominator = 1 / base_accuracy + 1 / novel_accuracy
-    hm = numerator / denominator
-    return hm
+    if base_accuracy + novel_accuracy == 0:
+        return 0.0
+    if base_accuracy == 0 or novel_accuracy == 0:
+        return 0.0
+    return 2 * base_accuracy * novel_accuracy / (base_accuracy + novel_accuracy)

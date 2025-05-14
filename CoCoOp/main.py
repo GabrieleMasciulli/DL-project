@@ -31,7 +31,8 @@ def main():
 
     # split the three datasets
     train_base, _ = split_data(train_set, base_classes)
-    val_base, _ = split_data(val_set, base_classes)
+    val_base, val_novel = split_data(
+        val_set, base_classes)
     test_base, test_novel = split_data(test_set, base_classes)
 
     # Create data loaders
@@ -39,6 +40,16 @@ def main():
         train_base, batch_size=BATCH_SIZE_TRAIN, shuffle=True, num_workers=2)
     val_loader = torch.utils.data.DataLoader(
         val_base, batch_size=BATCH_SIZE_EVAL, shuffle=False, num_workers=2)
+
+    # Create DataLoader for novel validation set
+    eval_novel_loader = torch.utils.data.DataLoader(
+        val_novel, batch_size=BATCH_SIZE_EVAL, shuffle=False, num_workers=2)
+
+    # Create DataLoaders for test sets
+    test_base_loader = torch.utils.data.DataLoader(
+        test_base, batch_size=BATCH_SIZE_EVAL, shuffle=False, num_workers=2)
+    test_novel_loader = torch.utils.data.DataLoader(
+        test_novel, batch_size=BATCH_SIZE_EVAL, shuffle=False, num_workers=2)
 
     # ---- CoCoOp integration ----
     # Determine vis_dim from the CLIP model
@@ -69,10 +80,12 @@ def main():
     optimizer = optim.AdamW(
         list(cocoop.meta_net.parameters()) +
         [cocoop.ctx],
-        lr=1e-4,
-        weight_decay=1e-4
+        lr=2e-3,
+        weight_decay=1e-5
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30)
+
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=20)
     criterion = clip_contrastive_loss
 
     # Train the model
@@ -85,12 +98,15 @@ def main():
         val_loader=val_loader,
         optimizer=optimizer,
         criterion=criterion,
-        epochs=15,
+        epochs=20,
         device=DEVICE,
         categories=base_classes,
         all_class_names=CLASS_NAMES,
+        clip_tokenizer=clip.tokenize,
         scheduler=scheduler,
-        clip_tokenizer=clip.tokenize
+        patience=5,
+        eval_novel_loader=eval_novel_loader,
+        novel_categories=novel_classes,
     )
     print("✅ Training complete!\n")
 
@@ -99,10 +115,9 @@ def main():
     base_accuracy = eval(
         cocoop_model=cocoop,
         clip_model_visual=model.visual,
-        dataset=test_base,
-        eval_categories=base_classes,  # Categories to evaluate against
-        all_class_names=CLASS_NAMES,  # All possible class names
-        batch_size=32,
+        data_loader=test_base_loader,
+        eval_categories=base_classes,
+        all_class_names=CLASS_NAMES,
         device=DEVICE,
         clip_tokenizer=clip.tokenize,
         label="🧠 CoCoOp evaluation on Base Classes"
@@ -110,10 +125,9 @@ def main():
     novel_accuracy = eval(
         cocoop_model=cocoop,
         clip_model_visual=model.visual,
-        dataset=test_novel,
-        eval_categories=novel_classes,  # Categories to evaluate against
-        all_class_names=CLASS_NAMES,  # All possible class names
-        batch_size=32,
+        data_loader=test_novel_loader,
+        eval_categories=novel_classes,
+        all_class_names=CLASS_NAMES,
         device=DEVICE,
         clip_tokenizer=clip.tokenize,
         label="🧠 CoCoOp evaluation on Novel Classes"

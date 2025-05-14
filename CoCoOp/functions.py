@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, Subset
 from torchvision.datasets import Flowers102
 from tqdm import tqdm
 from model import get_tokenized_prompts
-from utils import BATCH_SIZE_EVAL
+from utils import BATCH_SIZE_EVAL, harmonic_mean
 import torch.nn.functional as F
 from clip import tokenize
 
@@ -42,6 +42,7 @@ def train_one_epoch_cocoop(
     criterion,
     device,
     categories,
+    all_class_names,
 ):
     model.train()
     running_loss = 0.0
@@ -61,6 +62,7 @@ def train_one_epoch_cocoop(
         global_labels_for_batch = labels[valid_indices]
 
         # Find unique classes in this batch and build local mapping
+        # These are global indices
         unique_classes = sorted(set(global_labels_for_batch.tolist()))
         global_to_local_label_map = {
             global_idx: local_idx for local_idx, global_idx in enumerate(unique_classes)}
@@ -72,19 +74,21 @@ def train_one_epoch_cocoop(
 
         with torch.no_grad():
             image_features = clip_model_visual(
-                images.to(model.clip_model.dtype))
+                images.to(model.ctx.dtype))
             image_features = image_features / \
                 image_features.norm(dim=-1, keepdim=True)
 
         # Get text features for the batch classes using the CoCoOp model
-        classnames = [model.classnames[i] for i in unique_classes]
-        tokenized_prompts = get_tokenized_prompts(
-            classnames, tokenize, device, model.n_ctx
+        classnames_for_batch = [all_class_names[global_idx]
+                                for global_idx in unique_classes]
+        tokenized_prompts_for_batch = get_tokenized_prompts(
+            classnames_for_batch, tokenize, device, model.n_ctx
         ).to(device)
 
         # Forward pass through CoCoOp model to get text features
         text_features_all = model.encode_text(
-            tokenized_prompts, image_features=image_features)
+            tokenized_prompts_for_batch, image_features=image_features
+        )
         text_features_all = text_features_all / \
             text_features_all.norm(dim=-1, keepdim=True)
 
@@ -126,7 +130,6 @@ def train_cocoop(
     patience=3,
     eval_novel_loader=None,
     novel_categories=None,
-    harmonic_mean_func=None
 ):
     best_combined_score = -float('inf')
     best_model_state = None
@@ -141,17 +144,17 @@ def train_cocoop(
             optimizer=optimizer,
             criterion=criterion,
             device=device,
-            categories=categories
+            categories=categories,
+            all_class_names=all_class_names
         )
 
         # Evaluate on validation set (base)
         val_acc_base = eval(
             cocoop_model=model,
             clip_model_visual=clip_model_visual,
-            dataset=val_loader.dataset,
+            data_loader=val_loader,
             eval_categories=categories,
             all_class_names=all_class_names,
-            batch_size=BATCH_SIZE_EVAL,
             device=device,
             clip_tokenizer=clip_tokenizer,
             label=f"Validation Base Epoch {epoch+1}/{epochs}"
@@ -162,10 +165,9 @@ def train_cocoop(
             val_acc_novel = eval(
                 cocoop_model=model,
                 clip_model_visual=clip_model_visual,
-                dataset=eval_novel_loader.dataset,
+                data_loader=eval_novel_loader,
                 eval_categories=novel_categories,
                 all_class_names=all_class_names,
-                batch_size=BATCH_SIZE_EVAL,
                 device=device,
                 clip_tokenizer=clip_tokenizer,
                 label=f"Validation Novel Epoch {epoch+1}/{epochs}"
@@ -174,10 +176,7 @@ def train_cocoop(
             val_acc_novel = 0.0
 
         # Combined score (sum or harmonic mean)
-        if harmonic_mean_func is not None:
-            combined_score = harmonic_mean_func(val_acc_base, val_acc_novel)
-        else:
-            combined_score = val_acc_base + val_acc_novel
+        combined_score = harmonic_mean(val_acc_base, val_acc_novel)
 
         print(
             f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Base Acc: {val_acc_base:.4f}, Val Novel Acc: {val_acc_novel:.4f}, Combined Score: {combined_score:.4f}"
@@ -207,17 +206,14 @@ def train_cocoop(
 def eval(
     cocoop_model,
     clip_model_visual,
-    dataset,
+    data_loader,
     eval_categories,
     all_class_names,
-    batch_size,
     device,
     clip_tokenizer,
     label="Evaluation"
 ):
     print(f"\n🔍 {label} on {len(eval_categories)} categories...")
-    data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
     cocoop_model.eval()
     correct_predictions = 0
@@ -259,7 +255,7 @@ def eval(
 
             # 1. Get image features
             image_features_full = clip_model_visual(
-                images.to(cocoop_model.clip_model.dtype))
+                images.to(cocoop_model.ctx.dtype))
 
             # 2. Generate delta_ctx using MetaNet
             # Ensure image_features_full are on the correct device and dtype for MetaNet
@@ -299,11 +295,11 @@ def eval(
 
             # Pass through CLIP's text transformer
             x = x.permute(1, 0, 2)  # NLD -> LND
-            x = cocoop_model.transformer(x.to(cocoop_model.clip_model.dtype))
+            x = cocoop_model.transformer(x.to(cocoop_model.ctx.dtype))
             x = x.permute(1, 0, 2)  # LND -> NLD
 
             # Final layer normalization and projection
-            x = cocoop_model.ln_final(x).type(cocoop_model.clip_model.dtype)
+            x = cocoop_model.ln_final(x).type(cocoop_model.ctx.dtype)
 
             eos_indices = tokenized_eval_prompts.argmax(dim=-1)
             eos_indices_expanded = eos_indices.unsqueeze(
@@ -364,7 +360,3 @@ def clip_contrastive_loss(image_features, text_features, temperature=0.07):
     loss_i = F.cross_entropy(logits_per_image, labels)
     loss_t = F.cross_entropy(logits_per_text, labels)
     return (loss_i + loss_t) / 2
-
-
-def harmonic_mean(h_new, h_base):
-    return 2 * h_new * h_base / (h_new + h_base) if (h_new + h_base) != 0 else 0
