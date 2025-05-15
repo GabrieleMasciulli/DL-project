@@ -16,13 +16,12 @@ class MetaNet(nn.Module):
     Consists of a 2-layer MLP with a bottleneck design.
     """
 
-    def __init__(self, vis_dim, n_ctx, ctx_dim, bottleneck_reduction=16, dtype=torch.float32, dropout=0.0):
+    def __init__(self, vis_dim, n_ctx, ctx_dim, bottleneck_reduction=16, dtype=torch.float32):
         super().__init__()
         self.n_ctx = n_ctx
         self.ctx_dim = ctx_dim
         hidden_dim = vis_dim // bottleneck_reduction
 
-        self.drop = nn.Dropout(dropout)
         self.fc1 = nn.Linear(vis_dim, hidden_dim, dtype=dtype)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(hidden_dim, n_ctx * ctx_dim, dtype=dtype)
@@ -37,7 +36,6 @@ class MetaNet(nn.Module):
         """
         x = self.fc1(image_features)
         x = self.relu(x)
-        x = self.drop(x)
         x = self.fc2(x)
         # Reshape to (batch_size_img, n_ctx, ctx_dim)
         delta_ctx = x.view(-1, self.n_ctx, self.ctx_dim)
@@ -45,7 +43,7 @@ class MetaNet(nn.Module):
 
 
 class CoCoOp(nn.Module):
-    def __init__(self, clip_model, classnames, n_ctx=16, ctx_dim=512, vis_dim=512, device="cpu", dropout=0.0):
+    def __init__(self, clip_model, classnames, n_ctx=16, ctx_dim=512, vis_dim=512, device="cpu"):
         super().__init__()
         self.clip_model = clip_model
         self.classnames = classnames
@@ -63,7 +61,7 @@ class CoCoOp(nn.Module):
 
         # Initialize Meta-Net
         # Ensure MetaNet parameters are on the same device and dtype
-        self.meta_net = MetaNet(vis_dim, n_ctx, ctx_dim, dropout=dropout,
+        self.meta_net = MetaNet(vis_dim, n_ctx, ctx_dim,
                                 dtype=clip_dtype).to(device)
 
         # Tokenize template prompts (these are static parts of the prompt)

@@ -1,5 +1,4 @@
 from utils import DEVICE, base_novel_categories, harmonic_mean, BATCH_SIZE_EVAL, BATCH_SIZE_TRAIN
-# Will change train_coop later
 from functions import split_data, get_data, eval, train_cocoop, clip_contrastive_loss
 import clip
 from model import CoCoOp
@@ -62,8 +61,7 @@ def main():
         n_ctx=16,
         ctx_dim=model.ln_final.weight.shape[0],
         vis_dim=vis_dim,
-        device=DEVICE,
-        dropout=0.2
+        device=DEVICE
     ).to(DEVICE)
 
     # ---- Training setup ----

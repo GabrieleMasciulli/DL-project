@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, Subset
 from torchvision.datasets import Flowers102
 from tqdm import tqdm
 from model import get_tokenized_prompts
-from utils import BATCH_SIZE_EVAL, harmonic_mean
+from utils import harmonic_mean
 import torch.nn.functional as F
 from clip import tokenize
 
@@ -73,8 +73,9 @@ def train_one_epoch_cocoop(
         optimizer.zero_grad()
 
         with torch.no_grad():
+            target_dtype = clip_model_visual.conv1.weight.dtype
             image_features = clip_model_visual(
-                images.to(model.ctx.dtype))
+                images.to(target_dtype))
             image_features = image_features / \
                 image_features.norm(dim=-1, keepdim=True)
 
@@ -254,19 +255,21 @@ def eval(
                 [eval_global_to_local_map[l.item()] for l in global_labels_for_batch], device=device)
 
             # 1. Get image features
+            target_dtype = clip_model_visual.conv1.weight.dtype
             image_features_full = clip_model_visual(
-                images.to(cocoop_model.clip_model.dtype))
+                images.to(target_dtype))
 
             # 2. Generate delta_ctx using MetaNet
-            # Ensure image_features_full are on the correct device and dtype for MetaNet
+            meta_net_input_dtype = cocoop_model.meta_net.fc1.weight.dtype
             delta_ctx = cocoop_model.meta_net(
-                image_features_full.to(cocoop_model.meta_net.fc1.weight.dtype))
+                image_features_full.to(meta_net_input_dtype))
 
             # 3. Form dynamic_ctx
             # dynamic_ctx shape: (B_img, n_ctx, ctx_dim)
-            dynamic_ctx = cocoop_model.ctx.unsqueeze(0) + delta_ctx
+            dynamic_ctx = cocoop_model.ctx.unsqueeze(
+                0) + delta_ctx.to(cocoop_model.ctx.dtype)
 
-            # 4. Construct text features for `current_eval_classnames` using `dynamic_ctx`
+            # 4. Construct text features
             B_img = image_features_full.shape[0]
             N_eval_cls = len(current_eval_classnames)
             L_prompt = tokenized_eval_prompts.shape[1]
@@ -290,16 +293,25 @@ def eval(
             x = final_embeddings.view(
                 B_img * N_eval_cls, L_prompt, cocoop_model.ctx_dim)
 
-            # Add positional embeddings
-            x = x + cocoop_model.positional_embedding.to(x.dtype)
+            # Get the target dtype from the transformer's parameters
+            transformer_dtype = next(
+                cocoop_model.transformer.parameters()).dtype
+
+            # Add positional embeddings (ensure same dtype)
+            x = x.to(transformer_dtype)
+            x = x + cocoop_model.positional_embedding.to(transformer_dtype)
 
             # Pass through CLIP's text transformer
             x = x.permute(1, 0, 2)  # NLD -> LND
-            x = cocoop_model.transformer(x.to(cocoop_model.ctx.dtype))
+            x = cocoop_model.transformer(x)
             x = x.permute(1, 0, 2)  # LND -> NLD
 
             # Final layer normalization and projection
-            x = cocoop_model.ln_final(x).type(cocoop_model.ctx.dtype)
+            x = cocoop_model.ln_final(x)
+
+            # Ensure consistent dtype for text projection
+            text_projection_dtype = cocoop_model.text_projection.dtype
+            x = x.to(text_projection_dtype)
 
             eos_indices = tokenized_eval_prompts.argmax(dim=-1)
             eos_indices_expanded = eos_indices.unsqueeze(
