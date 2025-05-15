@@ -6,6 +6,7 @@ from model import get_tokenized_prompts
 from utils import harmonic_mean
 import torch.nn.functional as F
 from clip import tokenize
+import numpy as np
 
 
 def split_data(dataset: Dataset, categories: list[int]) -> tuple[Subset, Subset]:
@@ -220,6 +221,9 @@ def eval(
     correct_predictions = 0
     total_samples = 0
 
+    all_predictions_list = []
+    all_targets_list = []
+
     # Create a mapping from global category index to local index (0 to N_eval_categories-1)
     eval_global_to_local_map = {
         global_idx: local_idx for local_idx, global_idx in enumerate(eval_categories)}
@@ -341,10 +345,39 @@ def eval(
                                     target_local_labels).sum().item()
             total_samples += target_local_labels.size(0)
 
-    accuracy = correct_predictions / total_samples if total_samples > 0 else 0.0
+            all_predictions_list.extend(predictions.cpu().numpy())
+            all_targets_list.extend(target_local_labels.cpu().numpy())
+
+    # Calculate per-class accuracy
+    if total_samples > 0:
+        num_classes_eval = len(eval_categories)
+        preds_np = np.array(all_predictions_list)
+        targets_np = np.array(all_targets_list)
+
+        class_correct = np.zeros(num_classes_eval)
+        class_total = np.zeros(num_classes_eval)
+
+        # Ensure targets_np contains valid indices for class_total and class_correct
+        # This assumes target_local_labels are already 0 to num_classes_eval-1
+        for i in range(num_classes_eval):
+            class_total[i] = np.sum(targets_np == i)
+            class_correct[i] = np.sum((preds_np == i) & (targets_np == i))
+
+        acc_per_class = np.zeros(num_classes_eval)
+        # Calculate accuracy only for classes present in the targets
+        valid_classes_mask = class_total > 0
+        acc_per_class[valid_classes_mask] = class_correct[valid_classes_mask] / \
+            class_total[valid_classes_mask]
+
+        mean_accuracy = np.mean(acc_per_class[valid_classes_mask]) if np.any(
+            valid_classes_mask) else 0.0
+    else:
+        mean_accuracy = 0.0
+
     print(
-        f"📊 {label} Accuracy: {accuracy*100:.2f}% ({correct_predictions}/{total_samples})")
-    return accuracy
+        f"📊 {label} Mean Per-Class Accuracy: {mean_accuracy*100:.2f}% (Overall: {correct_predictions}/{total_samples} samples)"
+    )
+    return mean_accuracy
 
 
 def clip_contrastive_loss(image_features, text_features, temperature=0.07):

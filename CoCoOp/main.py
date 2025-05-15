@@ -78,12 +78,12 @@ def main():
     optimizer = optim.AdamW(
         list(cocoop.meta_net.parameters()) +
         [cocoop.ctx],
-        lr=2e-3,
+        lr=1e-3,
         weight_decay=1e-5
     )
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=20)
+        optimizer, T_max=30)
     criterion = clip_contrastive_loss
 
     # Train the model
@@ -96,13 +96,13 @@ def main():
         val_loader=val_loader,
         optimizer=optimizer,
         criterion=criterion,
-        epochs=20,
+        epochs=30,
         device=DEVICE,
         categories=base_classes,
         all_class_names=CLASS_NAMES,
         clip_tokenizer=clip.tokenize,
         scheduler=scheduler,
-        patience=5,
+        patience=10,
         eval_novel_loader=eval_novel_loader,
         novel_categories=novel_classes,
     )
