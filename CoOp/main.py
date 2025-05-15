@@ -54,9 +54,9 @@ def main():
     for param in coop.clip_model.parameters():
         param.requires_grad = False
 
-    # Only optimize the context vectors
-    optimizer = optim.Adam(coop.parameters(), lr=0.001)
-    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(coop.parameters(), lr=0.002, weight_decay=0.01)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
     # Train the model
     print("\n🚀 Starting CoOp training...")
@@ -66,11 +66,12 @@ def main():
         val_loader=val_loader,
         optimizer=optimizer,
         criterion=criterion,
-        epochs=10,  # You can adjust this
+        epochs=50,
         device=DEVICE,
         categories=base_classes,
         CLASS_NAMES=CLASS_NAMES,
-        clip=clip
+        clip=clip,
+        scheduler=scheduler
     )
     print("✅ Training complete!\n")
 

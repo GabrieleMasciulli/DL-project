@@ -133,25 +133,13 @@ def eval(model, dataset, categories, batch_size, device, CLASS_NAMES, clip, labe
     return accuracy
 
 
-def train_coop(model, train_loader, val_loader, optimizer, criterion, epochs, device, categories, CLASS_NAMES, clip):
+def train_coop(model, train_loader, val_loader, optimizer, criterion, epochs, device, categories, CLASS_NAMES, clip, scheduler=None):
     """Train the CoOp model for multiple epochs.
-
-    Args:
-        model: CoOp model
-        train_loader: DataLoader for training data
-        val_loader: DataLoader for validation data
-        optimizer: Optimizer for training
-        criterion: Loss function
-        epochs: Number of epochs to train
-        device: Device to run training on
-        categories: List of class indices
-        CLASS_NAMES: List of class names
-        clip: CLIP module
-
-    Returns:
-        model: Trained CoOp model
     """
     best_val_acc = 0.0
+    best_model_state = None
+    patience = 5
+    epochs_no_improve = 0
 
     for epoch in range(epochs):
         # Train for one epoch
@@ -179,9 +167,20 @@ def train_coop(model, train_loader, val_loader, optimizer, criterion, epochs, de
         print(
             f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}")
 
-        # Save best model
+        # Step the scheduler
+        if scheduler is not None:
+            scheduler.step()
+
+        # Early stopping with model saving
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            # Optionally save model checkpoint here
+            best_model_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"Early stopping triggered. Best validation accuracy: {best_val_acc:.4f}")
+                model.load_state_dict(best_model_state)
+                break
 
     return model

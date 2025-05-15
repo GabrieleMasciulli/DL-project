@@ -6,7 +6,8 @@ import clip
 @torch.no_grad()
 def get_tokenized_prompts(classnames, tokenizer, device):
     prompts = [
-        f"a photo of a {' '.join(['X'] * 16)} {name}." for name in classnames]
+        f"a photo of a {' '.join(['X'] * 16)} {name}, a type of flower." for name in classnames
+    ]
     return tokenizer(prompts).to(device)
 
 
