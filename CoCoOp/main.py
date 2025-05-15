@@ -75,11 +75,12 @@ def main():
         param.requires_grad = True
 
     # Optimizer should only optimize CoCoOp's parameters (ctx and meta_net)
-    optimizer = optim.AdamW(
+    optimizer = optim.SGD(
         list(cocoop.meta_net.parameters()) +
         [cocoop.ctx],
-        lr=1e-3,
-        weight_decay=1e-5
+        lr=2e-3,
+        momentum=0.9,
+        weight_decay=5e-4
     )
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
