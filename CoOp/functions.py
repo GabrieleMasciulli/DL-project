@@ -80,12 +80,14 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, categorie
 
         # Forward pass: get text features from CoOp
         text_features = model()
-        text_features_norm = text_features / text_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+        text_features_norm = text_features / \
+            text_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
 
         # Get image features from CLIP
         with torch.no_grad():
             image_features = model.clip_model.encode_image(images)
-            image_features_norm = image_features / image_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+            image_features_norm = image_features / \
+                image_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
 
         # Compute logits and loss
         logits = 100.0 * image_features_norm @ text_features_norm.T
@@ -108,7 +110,7 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, categorie
 
 
 @torch.no_grad()
-def eval(model, dataset, categories, batch_size, device, CLASS_NAMES, clip, label=""):
+def eval(model, dataset, categories, batch_size, device, label=""):
     model.eval()
     contig_cat2idx = {cat: idx for idx, cat in enumerate(categories)}
 
@@ -174,12 +176,14 @@ def train_coop(model, train_loader, val_loader, optimizer, criterion, epochs, de
         # Early stopping with model saving
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            best_model_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            best_model_state = {k: v.cpu()
+                                for k, v in model.state_dict().items()}
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
-                print(f"Early stopping triggered. Best validation accuracy: {best_val_acc:.4f}")
+                print(
+                    f"Early stopping triggered. Best validation accuracy: {best_val_acc:.4f}")
                 model.load_state_dict(best_model_state)
                 break
 
