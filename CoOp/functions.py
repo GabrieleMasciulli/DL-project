@@ -68,18 +68,18 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, categorie
     correct = 0
     total = 0
 
+    categories_tensor = torch.tensor(categories, device=device)
+
     for images, targets in tqdm(train_loader, desc="Training"):
-        # Map dataset labels to contiguous indices for the subset of classes we're using
-        contig_cat2idx = {cat: idx for idx, cat in enumerate(categories)}
-        targets = torch.tensor([contig_cat2idx[t.item()]
-                               for t in targets]).to(device)
         images = images.to(device)
+        targets = targets.to(device)
 
         # Zero the parameter gradients
         optimizer.zero_grad()
 
         # Forward pass: get text features from CoOp
-        text_features = model()
+        full_text = model()
+        text_features = full_text[categories]
         text_features_norm = text_features / \
             text_features.norm(dim=-1, keepdim=True).clamp(min=1e-12)
 
@@ -99,7 +99,8 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, categorie
 
         # Statistics
         running_loss += loss.item()
-        pred = logits.argmax(dim=1)
+        pred_idx = logits.argmax(dim=1)
+        pred = categories_tensor[pred_idx]
         correct += (pred == targets).sum().item()
         total += targets.size(0)
 
@@ -112,30 +113,31 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, categorie
 @torch.no_grad()
 def eval(model, dataset, categories, batch_size, device, label=""):
     model.eval()
-    contig_cat2idx = {cat: idx for idx, cat in enumerate(categories)}
 
-    text_features = model().detach()
+    full_text = model().detach()
+    text_features = full_text[categories]
     text_features /= text_features.norm(dim=-1, keepdim=True)
 
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     correct_predictions = 0
 
+    categories_tensor = torch.tensor(categories, device=device)
+
     for image, target in tqdm(dataloader, desc=label):
-        target = torch.Tensor([contig_cat2idx[t.item()]
-                              for t in target]).long()
         image = image.to(device)
         target = target.to(device)
         # Use CLIP for image features
         image_features = model.clip_model.encode_image(image)
         image_features /= image_features.norm(dim=-1, keepdim=True)
-        predicted_class = (image_features @ text_features.T).argmax(dim=-1)
+        predicted_idx = (image_features @ text_features.T).argmax(dim=-1)
+        predicted_class = categories_tensor[predicted_idx]
         correct_predictions += (predicted_class == target).sum().item()
     accuracy = correct_predictions / len(dataset)
     return accuracy
 
 
-def train_coop(model, train_loader, val_loader, optimizer, criterion, epochs, device, categories, CLASS_NAMES, clip, scheduler=None):
+def train_coop(model, train_loader, val_loader, optimizer, criterion, epochs, device, categories, scheduler=None):
     """Train the CoOp model for multiple epochs.
     """
     best_val_acc = 0.0
@@ -161,8 +163,6 @@ def train_coop(model, train_loader, val_loader, optimizer, criterion, epochs, de
             categories=categories,
             batch_size=train_loader.batch_size,
             device=device,
-            CLASS_NAMES=CLASS_NAMES,
-            clip=clip,
             label=f"Validation Epoch {epoch+1}/{epochs}"
         )
 

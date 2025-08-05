@@ -12,9 +12,29 @@ def main():
     _, _, tmp_test = get_data()
     base_classes, novel_classes = base_novel_categories(tmp_test)
 
-    CLASS_NAMES = ["pink primrose", "hard-leaved pocket orchid", "canterbury bells", "sweet pea", "english marigold", "tiger lily", "moon orchid", "bird of paradise", "monkshood", "globe thistle", "snapdragon", "colt's foot", "king protea", "spear thistle", "yellow iris", "globe-flower", "purple coneflower", "peruvian lily", "balloon flower", "giant white arum lily", "fire lily", "pincushion flower", "fritillary", "red ginger", "grape hyacinth", "corn poppy", "prince of wales feathers", "stemless gentian", "artichoke", "sweet william", "carnation", "garden phlox", "love in the mist", "mexican aster", "alpine sea holly", "ruby-lipped cattleya", "cape flower", "great masterwort", "siam tulip", "lenten rose", "barbeton daisy", "daffodil", "sword lily", "poinsettia", "bolero deep blue", "wallflower", "marigold",
-                   "buttercup", "oxeye daisy", "common dandelion", "petunia", "wild pansy", "primula", "sunflower", "pelargonium", "bishop of llandaff", "gaura", "geranium", "orange dahlia", "pink-yellow dahlia?", "cautleya spicata", "japanese anemone", "black-eyed susan", "silverbush", "californian poppy", "osteospermum", "spring crocus", "bearded iris", "windflower", "tree poppy", "gazania", "azalea", "water lily", "rose", "thorn apple", "morning glory", "passion flower", "lotus", "toad lily", "anthurium", "frangipani", "clematis", "hibiscus", "columbine", "desert-rose", "tree mallow", "magnolia", "cyclamen", "watercress", "canna lily", "hippeastrum", "bee balm", "ball moss", "foxglove", "bougainvillea", "camellia", "mallow", "mexican petunia", "bromelia", "blanket flower", "trumpet creeper", "blackberry lily"]
-
+    CLASS_NAMES = [
+        'pink primrose', 'hard-leaved pocket orchid', 'canterbury bells', 'sweet pea', 'english marigold',
+        'tiger lily', 'moon orchid', 'bird of paradise', 'monkshood', 'globe thistle',
+        'snapdragon', "colt's foot", 'king protea', 'spear thistle', 'yellow iris',
+        'globe-flower', 'purple coneflower', 'peruvian lily', 'balloon flower', 'giant white arum lily',
+        'fire lily', 'pincushion flower', 'fritillary', 'red ginger', 'grape hyacinth',
+        'corn poppy', 'prince of wales feathers', 'stemless gentian', 'artichoke', 'sweet william',
+        'carnation', 'garden phlox', 'love in the mist', 'mexican aster', 'alpine sea holly',
+        'ruby-lipped cattleya', 'cape flower', 'great masterwort', 'siam tulip', 'lenten rose',
+        'barbeton daisy', 'daffodil', 'sword lily', 'poinsettia', 'bolero deep blue',
+        'wallflower', 'marigold', 'buttercup', 'oxeye daisy', 'common dandelion',
+        'petunia', 'wild pansy', 'primula', 'sunflower', 'pelargonium',
+        'bishop of llandaff', 'gaura', 'geranium', 'orange dahlia', 'pink-yellow dahlia',
+        'cautleya spicata', 'japanese anemone', 'black-eyed susan', 'silverbush', 'californian poppy',
+        'osteospermum', 'spring crocus', 'bearded iris', 'windflower', 'tree poppy',
+        'gazania', 'azalea', 'water lily', 'rose', 'thorn apple',
+        'morning glory', 'passion flower', 'lotus lotus', 'toad lily', 'anthurium',
+        'frangipani', 'clematis', 'hibiscus', 'columbine', 'desert-rose',
+        'tree mallow', 'magnolia', 'cyclamen', 'watercress', 'canna lily',
+        'hippeastrum', 'bee balm', 'ball moss', 'foxglove', 'bougainvillea',
+        'camellia', 'mallow', 'mexican petunia', 'bromelia', 'blanket flower',
+        'trumpet creeper', 'blackberry lily'
+    ]
     # available models = ['RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
     model, preprocess = clip.load("ViT-B/16", device=DEVICE)
 
@@ -39,7 +59,7 @@ def main():
     # Only use base classes for prompt learning
     coop = CoOp(
         clip_model=model,
-        classnames=[CLASS_NAMES[i] for i in base_classes],
+        classnames=CLASS_NAMES,
         n_ctx=16,
         device=DEVICE
     ).to(DEVICE)
@@ -61,11 +81,9 @@ def main():
         val_loader=val_loader,
         optimizer=optimizer,
         criterion=criterion,
-        epochs=50,
+        epochs=10,
         device=DEVICE,
         categories=base_classes,
-        CLASS_NAMES=CLASS_NAMES,
-        clip=clip,
         scheduler=scheduler
     )
     print("✅ Training complete!\n")
