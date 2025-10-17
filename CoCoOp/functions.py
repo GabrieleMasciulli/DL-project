@@ -1,0 +1,407 @@
+import torch
+from torch.utils.data import Dataset, Subset
+from torchvision.datasets import Flowers102
+from tqdm import tqdm
+from model import get_tokenized_prompts
+from utils import harmonic_mean
+import torch.nn.functional as F
+from clip import tokenize
+import numpy as np
+
+
+def split_data(dataset: Dataset, categories: list[int]) -> tuple[Subset, Subset]:
+    idx = [i for i, (_, label) in enumerate(dataset) if label in categories]
+    return Subset(dataset, idx), Subset(dataset, [i for i in range(len(dataset)) if i not in idx])
+
+
+def get_data(transform=None):
+    if transform is None:
+        # Default transform if none provided (e.g., for initial inspection)
+        from torchvision import transforms
+        transform = transforms.Compose([
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[
+                                 0.229, 0.224, 0.225])
+        ])
+
+    train_set = Flowers102(
+        root="./data", split="train", download=True, transform=transform)
+    val_set = Flowers102(
+        root="./data", split="val", download=True, transform=transform)
+    test_set = Flowers102(
+        root="./data", split="test", download=True, transform=transform)
+    return train_set, val_set, test_set
+
+
+def train_one_epoch_cocoop(
+    model,
+    clip_model_visual,
+    train_loader,
+    optimizer,
+    criterion,
+    device,
+    categories,
+    all_class_names,
+):
+    model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    for images, labels in tqdm(train_loader, desc="Training"):
+        images, labels = images.to(device), labels.to(device)
+
+        # Only keep samples whose labels are in categories
+        valid_indices = [i for i, l_item in enumerate(
+            labels.tolist()) if l_item in categories]
+        if not valid_indices:
+            continue
+
+        images = images[valid_indices]
+        global_labels_for_batch = labels[valid_indices]
+
+        # Find unique classes in this batch and build local mapping
+        # These are global indices
+        unique_classes = sorted(set(global_labels_for_batch.tolist()))
+        global_to_local_label_map = {
+            global_idx: local_idx for local_idx, global_idx in enumerate(unique_classes)}
+        local_labels = torch.tensor(
+            [global_to_local_label_map[l.item()] for l in global_labels_for_batch], device=device
+        )
+
+        optimizer.zero_grad()
+
+        with torch.no_grad():
+            target_dtype = clip_model_visual.conv1.weight.dtype
+            image_features = clip_model_visual(
+                images.to(target_dtype))
+            image_features = image_features / \
+                image_features.norm(dim=-1, keepdim=True)
+
+        # Get text features for the batch classes using the CoCoOp model
+        classnames_for_batch = [all_class_names[global_idx]
+                                for global_idx in unique_classes]
+        tokenized_prompts_for_batch = get_tokenized_prompts(
+            classnames_for_batch, tokenize, device, model.n_ctx
+        ).to(device)
+
+        # Forward pass through CoCoOp model to get text features
+        text_features_all = model.encode_text(
+            tokenized_prompts_for_batch, image_features=image_features
+        )
+        text_features_all = text_features_all / \
+            text_features_all.norm(dim=-1, keepdim=True)
+
+        # Select the text feature corresponding to the ground-truth class for each image
+        text_features = text_features_all[torch.arange(
+            len(local_labels)), local_labels]
+
+        # Contrastive loss expects (image_features, text_features)
+        loss = criterion(image_features, text_features)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item() * images.size(0)
+        logits = image_features @ text_features.t()
+        pred = logits.argmax(dim=1)
+        correct += (pred == torch.arange(len(local_labels),
+                    device=device)).sum().item()
+        total += local_labels.size(0)
+
+    train_loss = running_loss / len(train_loader.dataset)
+    train_acc = correct / total if total > 0 else 0.0
+
+    return train_loss, train_acc
+
+
+def train_cocoop(
+    model,
+    clip_model_visual,
+    train_loader,
+    val_loader,
+    optimizer,
+    criterion,
+    epochs,
+    device,
+    categories,
+    all_class_names,
+    clip_tokenizer,
+    scheduler=None,
+    patience=3,
+    eval_novel_loader=None,
+    novel_categories=None,
+):
+    best_combined_score = -float('inf')
+    best_model_state = None
+    epochs_no_improve = 0
+
+    for epoch in range(epochs):
+        # Train for one epoch
+        train_loss, train_acc = train_one_epoch_cocoop(
+            model=model,
+            clip_model_visual=clip_model_visual,
+            train_loader=train_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            device=device,
+            categories=categories,
+            all_class_names=all_class_names
+        )
+
+        # Evaluate on validation set (base)
+        val_acc_base = eval(
+            cocoop_model=model,
+            clip_model_visual=clip_model_visual,
+            data_loader=val_loader,
+            eval_categories=categories,
+            all_class_names=all_class_names,
+            device=device,
+            clip_tokenizer=clip_tokenizer,
+            label=f"Validation Base Epoch {epoch+1}/{epochs}"
+        )
+
+        # Evaluate on validation set (novel)
+        if eval_novel_loader is not None and novel_categories is not None:
+            val_acc_novel = eval(
+                cocoop_model=model,
+                clip_model_visual=clip_model_visual,
+                data_loader=eval_novel_loader,
+                eval_categories=novel_categories,
+                all_class_names=all_class_names,
+                device=device,
+                clip_tokenizer=clip_tokenizer,
+                label=f"Validation Novel Epoch {epoch+1}/{epochs}"
+            )
+        else:
+            val_acc_novel = 0.0
+
+        # Combined score (sum or harmonic mean)
+        combined_score = harmonic_mean(val_acc_base, val_acc_novel)
+
+        print(
+            f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Base Acc: {val_acc_base:.4f}, Val Novel Acc: {val_acc_novel:.4f}, Combined Score: {combined_score:.4f}"
+        )
+
+        if scheduler is not None:
+            scheduler.step()
+
+        # Early stopping logic
+        if combined_score > best_combined_score:
+            best_combined_score = combined_score
+            best_model_state = {k: v.cpu()
+                                for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(
+                    f"Early stopping at epoch {epoch+1}. Best combined score: {best_combined_score:.4f}")
+                if best_model_state is not None:
+                    model.load_state_dict(best_model_state)
+                break
+
+    return model
+
+
+def eval(
+    cocoop_model,
+    clip_model_visual,
+    data_loader,
+    eval_categories,
+    all_class_names,
+    device,
+    clip_tokenizer,
+    label="Evaluation"
+):
+    print(f"\n🔍 {label} on {len(eval_categories)} categories...")
+
+    cocoop_model.eval()
+    correct_predictions = 0
+    total_samples = 0
+
+    all_predictions_list = []
+    all_targets_list = []
+
+    # Create a mapping from global category index to local index (0 to N_eval_categories-1)
+    eval_global_to_local_map = {
+        global_idx: local_idx for local_idx, global_idx in enumerate(eval_categories)}
+    # Names of the classes being evaluated in this run
+    current_eval_classnames = [all_class_names[i] for i in eval_categories]
+
+    # Tokenize prompts for the current evaluation categories
+    # These are the text prompts we will generate features for, using the dynamic context
+    tokenized_eval_prompts = get_tokenized_prompts(
+        current_eval_classnames, clip_tokenizer, device, cocoop_model.n_ctx
+    ).to(device)
+
+    # Pre-compute embeddings for the static parts of the evaluation prompts
+    # Shape: (N_eval_cls, L_prompt, D_embed)
+    prompt_embeddings_template = cocoop_model.token_embedding(
+        tokenized_eval_prompts)
+
+    progress_bar = tqdm(data_loader, desc=label, leave=False)
+    with torch.no_grad():
+        for images, global_labels in progress_bar:
+            images, global_labels = images.to(device), global_labels.to(device)
+
+            # Filter out labels not in the current eval_categories and map to local
+            valid_indices = [i for i, l_item in enumerate(
+                global_labels.tolist()) if l_item in eval_global_to_local_map]
+            if not valid_indices:
+                continue
+
+            images = images[valid_indices]
+            global_labels_for_batch = global_labels[valid_indices]
+            # Target labels are local to the `eval_categories`
+            target_local_labels = torch.tensor(
+                [eval_global_to_local_map[l.item()] for l in global_labels_for_batch], device=device)
+
+            # 1. Get image features
+            target_dtype = clip_model_visual.conv1.weight.dtype
+            image_features_full = clip_model_visual(
+                images.to(target_dtype))
+
+            # 2. Generate delta_ctx using MetaNet
+            meta_net_input_dtype = cocoop_model.meta_net.fc1.weight.dtype
+            delta_ctx = cocoop_model.meta_net(
+                image_features_full.to(meta_net_input_dtype))
+
+            # 3. Form dynamic_ctx
+            # dynamic_ctx shape: (B_img, n_ctx, ctx_dim)
+            dynamic_ctx = cocoop_model.ctx.unsqueeze(
+                0) + delta_ctx.to(cocoop_model.ctx.dtype)
+
+            # 4. Construct text features
+            B_img = image_features_full.shape[0]
+            N_eval_cls = len(current_eval_classnames)
+            L_prompt = tokenized_eval_prompts.shape[1]
+
+            # Expand prompt templates for each image in the batch
+            # Shape: (B_img, N_eval_cls, L_prompt, D_embed)
+            expanded_prompt_embeddings = prompt_embeddings_template.unsqueeze(
+                0).expand(B_img, -1, -1, -1)
+
+            # Expand dynamic_ctx for each class being evaluated
+            # Shape: (B_img, N_eval_cls, n_ctx, D_embed)
+            expanded_dynamic_ctx = dynamic_ctx.unsqueeze(
+                1).expand(-1, N_eval_cls, -1, -1)
+
+            # Create the final embeddings by inserting the dynamic context
+            final_embeddings = expanded_prompt_embeddings.clone()
+            final_embeddings[:, :, 1:1+cocoop_model.n_ctx,
+                             :] = expanded_dynamic_ctx
+
+            # Reshape for transformer: (B_img * N_eval_cls, L_prompt, D_embed)
+            x = final_embeddings.view(
+                B_img * N_eval_cls, L_prompt, cocoop_model.ctx_dim)
+
+            # Get the target dtype from the transformer's parameters
+            transformer_dtype = next(
+                cocoop_model.transformer.parameters()).dtype
+
+            # Add positional embeddings (ensure same dtype)
+            x = x.to(transformer_dtype)
+            x = x + cocoop_model.positional_embedding.to(transformer_dtype)
+
+            # Pass through CLIP's text transformer
+            x = x.permute(1, 0, 2)  # NLD -> LND
+            x = cocoop_model.transformer(x)
+            x = x.permute(1, 0, 2)  # LND -> NLD
+
+            # Final layer normalization and projection
+            x = cocoop_model.ln_final(x)
+
+            # Ensure consistent dtype for text projection
+            text_projection_dtype = cocoop_model.text_projection.dtype
+            x = x.to(text_projection_dtype)
+
+            eos_indices = tokenized_eval_prompts.argmax(dim=-1)
+            eos_indices_expanded = eos_indices.unsqueeze(
+                0).expand(B_img, -1).reshape(B_img * N_eval_cls)
+
+            text_features_eval = x[torch.arange(
+                x.shape[0]), eos_indices_expanded] @ cocoop_model.text_projection
+            text_features_eval = text_features_eval.view(
+                B_img, N_eval_cls, -1)  # (B_img, N_eval_cls, D_text_feat)
+
+            # Normalize features
+            image_features_norm = image_features_full / \
+                image_features_full.norm(dim=-1, keepdim=True)
+            text_features_eval_norm = text_features_eval / \
+                text_features_eval.norm(dim=-1, keepdim=True)
+
+            # Compute logits: (B, D) x (B, C, D) -> (B, C)
+            logits = torch.einsum(
+                'bd,bcd->bc', image_features_norm, text_features_eval_norm)
+            # Use logit_scale from the loaded CLIP model
+            logits *= cocoop_model.clip_model.logit_scale.exp()
+
+            # Predictions are local to eval_categories
+            _, predictions = torch.max(logits, 1)
+
+            correct_predictions += (predictions ==
+                                    target_local_labels).sum().item()
+            total_samples += target_local_labels.size(0)
+
+            all_predictions_list.extend(predictions.cpu().numpy())
+            all_targets_list.extend(target_local_labels.cpu().numpy())
+
+    # Calculate per-class accuracy
+    if total_samples > 0:
+        num_classes_eval = len(eval_categories)
+        preds_np = np.array(all_predictions_list)
+        targets_np = np.array(all_targets_list)
+
+        class_correct = np.zeros(num_classes_eval)
+        class_total = np.zeros(num_classes_eval)
+
+        # Ensure targets_np contains valid indices for class_total and class_correct
+        # This assumes target_local_labels are already 0 to num_classes_eval-1
+        for i in range(num_classes_eval):
+            class_total[i] = np.sum(targets_np == i)
+            class_correct[i] = np.sum((preds_np == i) & (targets_np == i))
+
+        acc_per_class = np.zeros(num_classes_eval)
+        # Calculate accuracy only for classes present in the targets
+        valid_classes_mask = class_total > 0
+        acc_per_class[valid_classes_mask] = class_correct[valid_classes_mask] / \
+            class_total[valid_classes_mask]
+
+        mean_accuracy = np.mean(acc_per_class[valid_classes_mask]) if np.any(
+            valid_classes_mask) else 0.0
+    else:
+        mean_accuracy = 0.0
+
+    print(
+        f"📊 {label} Mean Per-Class Accuracy: {mean_accuracy*100:.2f}% (Overall: {correct_predictions}/{total_samples} samples)"
+    )
+    return mean_accuracy
+
+
+def clip_contrastive_loss(image_features, text_features, temperature=0.07):
+    """
+        Computes the symmetric InfoNCE loss for image-text pairs.
+        Args:
+            image_features: (batch_size, dim)
+            text_features: (batch_size, dim)
+            temperature: scaling factor
+        Returns:
+            Scalar loss value
+        """
+    # Normalize features
+    image_features = F.normalize(image_features, dim=-1)
+    text_features = F.normalize(text_features, dim=-1)
+
+    # Ensure both features are on the same dtype and device
+    image_features = image_features.to(
+        dtype=text_features.dtype, device=text_features.device)
+
+    logits_per_image = image_features @ text_features.t() / temperature
+    logits_per_text = text_features @ image_features.t() / temperature
+
+    labels = torch.arange(image_features.size(0)).to(image_features.device)
+    loss_i = F.cross_entropy(logits_per_image, labels)
+    loss_t = F.cross_entropy(logits_per_text, labels)
+    return (loss_i + loss_t) / 2
