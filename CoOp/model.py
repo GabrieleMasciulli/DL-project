@@ -5,8 +5,8 @@ import clip
 
 @torch.no_grad()
 def get_tokenized_classnames(classnames, tokenizer, device):
-    """Tokenise only the fixed template "a {cls}." for each class."""
-    prompts = [f"a {name}." for name in classnames]
+    """Tokenise only the fixed template "a photo of a {cls}." for each class."""
+    prompts = [f"a photo of a {name}." for name in classnames]
     return tokenizer(prompts).to(device)
 
 
@@ -49,17 +49,17 @@ class CoOp(nn.Module):
             self.tokenized_prompts.to(self.device))  # [n_cls, 77, dim]
         batch, seq_len, dim = base.shape
 
-        # Broadcast shared ctx -> [batch, n_ctx, dim]
+        # Broadcast shared ctx from [n_ctx, ctx_dim] -> [batch, n_ctx, ctx_dim]
         ctx = self.ctx.unsqueeze(0).expand(batch, -1, -1).to(self.device)
 
         # Construct new embeddings tensor
         new_embeddings = torch.zeros_like(base)
 
         for i in range(batch):
-            e = base[i]
+            e: Any = base[i]
             sos = e[0:1]  # [1, dim]
             cls_tokens = e[1:self.orig_eot_idx[i]]  # without SOS/EOT
-            eot = e[self.orig_eot_idx[i]:self.orig_eot_idx[i]+1]  # [1, dim]
+            eot: Any = e[self.orig_eot_idx[i]:self.orig_eot_idx[i]+1]  # [1, dim]
 
             # Assemble: SOS | ctx | class tokens | EOT
             assembled = torch.cat([sos, ctx[i], cls_tokens, eot], dim=0)
