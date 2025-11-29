@@ -69,10 +69,10 @@ def eval(model, dataset, categories, batch_size, device, CLASS_NAMES, clip, labe
         image = image.to(device)
         target = target.to(device)
 
-        image_features = model.encode_image(image)
+        image_features = model.encode_image(image)  # (B, feats)
         image_features /= image_features.norm(dim=-1, keepdim=True)
-        similarity = image_features @ text_features.T
-        predicted_class = similarity.argmax(dim=-1)
+        similarity = image_features @ text_features.T  # (B, B)
+        predicted_class = similarity.argmax(dim=-1)  # (B)
         correct_predictions += (predicted_class == target).sum().item()
 
         total_processed += len(target)
