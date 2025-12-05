@@ -91,7 +91,7 @@ Where:
 An exhaustive grid search was performed to find the optimal balance between task learning ($\alpha$) and regularization ($\beta$) using a **3-fold cross-validation strategy**. For each configuration, the Base classes were randomly shuffled and split into _meta-training_ (N=25) and _meta-validation_(N=26) sets.
 
 <div align="center">
-  <img src="https://i.postimg.cc/T2Vt7MzM/hyperparam-study-analysis-2.png" alt="Hyperparameter Heatmap" width="900"/>
+  <img src="https://i.postimg.cc/T2Vt7MzM/hyperparam-study-analysis-2.png" alt="Hyperparameter Heatmap" width="800"/>
   <br />
   <em>Fig 3: Hyperparameter search for Alpha and Beta. The sweet spot was found at α=0.8, β=4.</em>
 </div>
